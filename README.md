@@ -1,5 +1,7 @@
 # BG Remover
 
+[![CI](https://github.com/assumcaonerd/bg-remover/actions/workflows/ci.yml/badge.svg)](https://github.com/assumcaonerd/bg-remover/actions/workflows/ci.yml)
+
 Desktop application for AI-powered background removal with side-by-side before/after preview.
 
 Built with Python, [rembg](https://github.com/danielgatis/rembg), Pillow, CustomTkinter and tkinterdnd2.
@@ -71,3 +73,17 @@ The first time you use a new model it may take 1–2 minutes to download. After 
 - Two preview panels
 - Status bar
 - Drag images onto the left panel
+
+## Continuous Integration
+
+This repository uses GitHub Actions (`.github/workflows/ci.yml`).
+
+On every push and pull request to `main` the workflow:
+
+- Runs on Python 3.10, 3.11 and 3.12
+- Installs dependencies from `requirements.txt`
+- Lints with Ruff
+- Checks syntax (`py_compile` + AST)
+- Runs a smoke test of the main imports (without opening the GUI)
+
+You can see the status in the **Actions** tab of the repository.
