@@ -74,6 +74,41 @@ The first time you use a new model it may take 1–2 minutes to download. After 
 - Status bar
 - Drag images onto the left panel
 
+## Building a standalone executable (PyInstaller)
+
+### Local build
+
+```bash
+pip install -r requirements.txt pyinstaller
+pyinstaller bg-remover.spec --noconfirm --clean
+```
+
+The output will be in `dist/BG-Remover/`.
+
+Files used for packaging:
+- `bg-remover.spec` – PyInstaller configuration
+- `hook-tkinterdnd2.py` – collects native drag-and-drop libraries
+
+### Automated builds (GitHub Actions)
+
+Workflow: `.github/workflows/build.yml`
+
+**How to trigger:**
+1. Go to the **Actions** tab → **Build Executables** → **Run workflow**
+2. Or create a version tag:
+   ```bash
+   git tag v1.0.0
+   git push origin v1.0.0
+   ```
+
+The workflow builds for:
+- **Windows** (`BG-Remover-Windows`)
+- **Linux** (`BG-Remover-Linux`)
+
+Artifacts stay available for 14 days. When you push a `v*` tag, a GitHub Release is created automatically with the zipped builds.
+
+> Note: AI models are **not** bundled. They download automatically on first use (to the user cache), which keeps the executable smaller.
+
 ## Continuous Integration
 
 This repository uses GitHub Actions (`.github/workflows/ci.yml`).
