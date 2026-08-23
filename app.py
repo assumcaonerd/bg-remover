@@ -1,10 +1,11 @@
 import customtkinter as ctk
 from tkinter import filedialog
-from PIL import Image, ImageTk, ImageDraw, ImageFont
+from PIL import Image, ImageTk, ImageDraw, ImageGrab
 from rembg import remove, new_session
 import os
 import threading
 from pathlib import Path
+import io
 
 # Drag & Drop
 try:
@@ -13,11 +14,18 @@ try:
 except ImportError:
     HAS_DND = False
 
+# Clipboard (Windows / Linux / macOS)
+try:
+    import pyperclip
+    HAS_PYPERCLIP = True
+except ImportError:
+    HAS_PYPERCLIP = False
+
 # Configuração visual
 ctk.set_appearance_mode("System")
 ctk.set_default_color_theme("blue")
 
-# Modelos disponíveis (nome amigável -> identificador rembg)
+# Modelos disponíveis
 MODELOS = {
     "u2net (geral - recomendado)": "u2net",
     "u2netp (leve e rápido)": "u2netp",
@@ -30,28 +38,20 @@ MODELOS = {
     "birefnet-general-lite (boa qualidade / mais leve)": "birefnet-general-lite",
 }
 
+EXTENSOES = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
+
 
 def criar_icone():
-    """Gera um ícone simples do aplicativo (magic wand / cut)."""
+    """Gera um ícone simples do aplicativo."""
     size = 256
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-
-    # Fundo circular azul
     margin = 12
     draw.ellipse([margin, margin, size - margin, size - margin], fill=(30, 100, 200, 255))
-
-    # Círculo interno mais claro
     draw.ellipse([40, 40, size - 40, size - 40], fill=(50, 140, 240, 255))
-
-    # Tesoura / corte estilizado (duas linhas cruzadas + círculo)
-    # Linha diagonal 1
     draw.line([(70, 70), (186, 186)], fill="white", width=18)
-    # Linha diagonal 2
     draw.line([(186, 70), (70, 186)], fill="white", width=18)
-    # Círculo central
     draw.ellipse([100, 100, 156, 156], fill=(30, 100, 200, 255), outline="white", width=8)
-
     return img
 
 
@@ -59,7 +59,7 @@ class AppRemoverBG(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        # Ícone da janela
+        # Ícone
         try:
             self.icone = criar_icone()
             self.icone_tk = ImageTk.PhotoImage(self.icone.resize((64, 64), Image.LANCZOS))
@@ -68,19 +68,22 @@ class AppRemoverBG(ctk.CTk):
             pass
 
         self.title("BG Remover - Removedor de Fundo com IA")
-        self.geometry("960x720")
+        self.geometry("980x760")
         self.resizable(False, False)
-        self.minsize(920, 680)
+        self.minsize(940, 720)
 
-        # Variáveis de estado
+        # Estado
         self.caminho_entrada = ""
         self.imagem_original = None
         self.imagem_sem_fundo = None
         self.photo_original = None
         self.photo_resultado = None
         self.processando = False
-        self.session = None  # sessão do modelo atual
+        self.session = None
         self.modelo_atual = "u2net"
+        self.fila_batch = []          # lista de caminhos para processar em lote
+        self.indice_batch = 0
+        self.pasta_saida_batch = ""
 
         # === TÍTULO ===
         self.label_titulo = ctk.CTkLabel(
@@ -88,13 +91,12 @@ class AppRemoverBG(ctk.CTk):
             text="🖼️ Removedor de Fundo com IA",
             font=ctk.CTkFont(size=24, weight="bold")
         )
-        self.label_titulo.pack(pady=(16, 6))
+        self.label_titulo.pack(pady=(14, 4))
 
-        # === FRAME DE CONTROLES (modelo + botões) ===
+        # === CONTROLES (modelo) ===
         self.frame_controles = ctk.CTkFrame(self, fg_color="transparent")
-        self.frame_controles.pack(pady=6, fill="x", padx=20)
+        self.frame_controles.pack(pady=4, fill="x", padx=20)
 
-        # Seleção de modelo
         self.label_modelo = ctk.CTkLabel(
             self.frame_controles,
             text="Modelo:",
@@ -105,104 +107,125 @@ class AppRemoverBG(ctk.CTk):
         self.combo_modelo = ctk.CTkComboBox(
             self.frame_controles,
             values=list(MODELOS.keys()),
-            width=320,
-            height=36,
+            width=340,
+            height=34,
             font=ctk.CTkFont(size=13),
             command=self.ao_mudar_modelo
         )
         self.combo_modelo.set("u2net (geral - recomendado)")
-        self.combo_modelo.pack(side="left", padx=(0, 20))
+        self.combo_modelo.pack(side="left", padx=(0, 16))
 
-        # === FRAME DOS BOTÕES ===
+        # === BOTÕES PRINCIPAIS ===
         self.frame_botoes = ctk.CTkFrame(self, fg_color="transparent")
         self.frame_botoes.pack(pady=4)
 
         self.btn_selecionar = ctk.CTkButton(
             self.frame_botoes,
-            text="📂 Selecionar Imagem",
+            text="📂 Selecionar",
             command=self.selecionar_imagem,
-            width=180,
-            height=40,
-            font=ctk.CTkFont(size=14)
+            width=140,
+            height=38,
+            font=ctk.CTkFont(size=13)
         )
-        self.btn_selecionar.pack(side="left", padx=8)
+        self.btn_selecionar.pack(side="left", padx=6)
+
+        self.btn_batch = ctk.CTkButton(
+            self.frame_botoes,
+            text="📁 Lote (várias)",
+            command=self.selecionar_lote,
+            width=140,
+            height=38,
+            font=ctk.CTkFont(size=13)
+        )
+        self.btn_batch.pack(side="left", padx=6)
 
         self.btn_processar = ctk.CTkButton(
             self.frame_botoes,
             text="✨ Remover Fundo",
             command=self.iniciar_remocao,
             state="disabled",
-            width=180,
-            height=40,
-            font=ctk.CTkFont(size=14)
+            width=150,
+            height=38,
+            font=ctk.CTkFont(size=13)
         )
-        self.btn_processar.pack(side="left", padx=8)
+        self.btn_processar.pack(side="left", padx=6)
 
         self.btn_salvar = ctk.CTkButton(
             self.frame_botoes,
-            text="💾 Salvar Resultado",
+            text="💾 Salvar",
             command=self.salvar_imagem,
             state="disabled",
-            width=180,
-            height=40,
-            font=ctk.CTkFont(size=14)
+            width=120,
+            height=38,
+            font=ctk.CTkFont(size=13)
         )
-        self.btn_salvar.pack(side="left", padx=8)
+        self.btn_salvar.pack(side="left", padx=6)
 
-        # === FRAME DE PRÉ-VISUALIZAÇÃO ===
+        self.btn_copiar = ctk.CTkButton(
+            self.frame_botoes,
+            text="📋 Copiar",
+            command=self.copiar_para_clipboard,
+            state="disabled",
+            width=120,
+            height=38,
+            font=ctk.CTkFont(size=13)
+        )
+        self.btn_copiar.pack(side="left", padx=6)
+
+        # === PRÉ-VISUALIZAÇÃO ===
         self.frame_preview = ctk.CTkFrame(self)
-        self.frame_preview.pack(pady=10, padx=20, fill="both", expand=True)
+        self.frame_preview.pack(pady=8, padx=18, fill="both", expand=True)
 
-        # --- Preview Original ---
+        # Original
         self.frame_original = ctk.CTkFrame(self.frame_preview)
-        self.frame_original.pack(side="left", padx=12, pady=12, fill="both", expand=True)
+        self.frame_original.pack(side="left", padx=10, pady=10, fill="both", expand=True)
 
         self.label_titulo_original = ctk.CTkLabel(
             self.frame_original,
             text="📷 Antes  (arraste a imagem aqui)",
-            font=ctk.CTkFont(size=15, weight="bold")
+            font=ctk.CTkFont(size=14, weight="bold")
         )
-        self.label_titulo_original.pack(pady=(8, 4))
+        self.label_titulo_original.pack(pady=(6, 2))
 
         self.label_preview_original = ctk.CTkLabel(
             self.frame_original,
-            text="Nenhuma imagem\n\nArraste e solte aqui\nou clique em Selecionar",
+            text="Nenhuma imagem\n\nArraste e solte aqui\nou use os botões acima",
             font=ctk.CTkFont(size=13),
             width=400,
-            height=400,
+            height=390,
             justify="center"
         )
-        self.label_preview_original.pack(pady=6, padx=10)
+        self.label_preview_original.pack(pady=4, padx=8)
 
-        # --- Preview Resultado ---
+        # Resultado
         self.frame_resultado = ctk.CTkFrame(self.frame_preview)
-        self.frame_resultado.pack(side="right", padx=12, pady=12, fill="both", expand=True)
+        self.frame_resultado.pack(side="right", padx=10, pady=10, fill="both", expand=True)
 
         self.label_titulo_resultado = ctk.CTkLabel(
             self.frame_resultado,
             text="✅ Depois",
-            font=ctk.CTkFont(size=15, weight="bold")
+            font=ctk.CTkFont(size=14, weight="bold")
         )
-        self.label_titulo_resultado.pack(pady=(8, 4))
+        self.label_titulo_resultado.pack(pady=(6, 2))
 
         self.label_preview_resultado = ctk.CTkLabel(
             self.frame_resultado,
             text="Resultado aparecerá aqui",
             font=ctk.CTkFont(size=13),
             width=400,
-            height=400
+            height=390
         )
-        self.label_preview_resultado.pack(pady=6, padx=10)
+        self.label_preview_resultado.pack(pady=4, padx=8)
 
         # === STATUS ===
         self.label_status = ctk.CTkLabel(
             self,
-            text="Aguardando imagem... Arraste uma foto ou use o botão Selecionar.",
+            text="Aguardando imagem... Arraste, selecione ou use o modo Lote.",
             font=ctk.CTkFont(size=13)
         )
-        self.label_status.pack(pady=(2, 12))
+        self.label_status.pack(pady=(2, 10))
 
-        # Configura drag & drop se a biblioteca estiver disponível
+        # Drag & Drop
         if HAS_DND:
             self._configurar_drag_drop()
         else:
@@ -210,65 +233,70 @@ class AppRemoverBG(ctk.CTk):
                 text="Aguardando imagem... (instale tkinterdnd2 para arrastar e soltar)"
             )
 
+    # ------------------------------------------------------------------
+    # Drag & Drop
+    # ------------------------------------------------------------------
     def _configurar_drag_drop(self):
-        """Ativa suporte a arrastar e soltar nos painéis de preview."""
         try:
             TkinterDnD.require(self)
-            # Registra o label de preview original como alvo de drop
-            self.label_preview_original.drop_target_register(DND_FILES)
-            self.label_preview_original.dnd_bind("<<Drop>>", self._on_drop)
-            # Também no frame original
-            self.frame_original.drop_target_register(DND_FILES)
-            self.frame_original.dnd_bind("<<Drop>>", self._on_drop)
+            for widget in (self.label_preview_original, self.frame_original):
+                widget.drop_target_register(DND_FILES)
+                widget.dnd_bind("<<Drop>>", self._on_drop)
         except Exception as e:
-            print(f"Aviso: não foi possível ativar drag & drop: {e}")
+            print(f"Aviso DnD: {e}")
 
     def _on_drop(self, event):
-        """Chamado quando o usuário solta arquivos na área de preview."""
         if self.processando:
             return
-
         try:
-            # event.data pode conter um ou vários caminhos (Tcl list)
             caminhos = self.tk.splitlist(event.data)
             if not caminhos:
                 return
 
-            caminho = caminhos[0].strip("{}")  # remove chaves extras do Windows
+            arquivos_validos = []
+            for c in caminhos:
+                caminho = c.strip("{}")
+                if Path(caminho).suffix.lower() in EXTENSOES and Path(caminho).is_file():
+                    arquivos_validos.append(caminho)
 
-            # Aceita apenas imagens
-            extensoes = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
-            if Path(caminho).suffix.lower() not in extensoes:
+            if not arquivos_validos:
                 self.label_status.configure(
-                    text="Arquivo não é uma imagem válida.",
+                    text="Nenhum arquivo de imagem válido encontrado.",
                     text_color=("red", "#e74c3c")
                 )
                 return
 
-            self.carregar_imagem(caminho)
+            if len(arquivos_validos) == 1:
+                self.carregar_imagem(arquivos_validos[0])
+            else:
+                # Vários arquivos soltos → trata como lote
+                self.iniciar_lote_com_lista(arquivos_validos)
 
         except Exception as e:
             self.label_status.configure(
-                text=f"Erro ao processar drop: {e}",
+                text=f"Erro no drop: {e}",
                 text_color=("red", "#e74c3c")
             )
 
+    # ------------------------------------------------------------------
+    # Modelo
+    # ------------------------------------------------------------------
     def ao_mudar_modelo(self, escolha):
-        """Atualiza o modelo selecionado."""
         self.modelo_atual = MODELOS.get(escolha, "u2net")
-        self.session = None  # força recriação da sessão na próxima execução
+        self.session = None
         self.label_status.configure(
             text=f"Modelo alterado para: {escolha}",
             text_color=("gray", "gray70")
         )
 
+    # ------------------------------------------------------------------
+    # Helpers de imagem
+    # ------------------------------------------------------------------
     def criar_fundo_xadrez(self, tamanho=(400, 400), celula=14):
-        """Cria fundo xadrez para visualizar transparência."""
         img = Image.new("RGBA", tamanho, (255, 255, 255, 255))
         draw = ImageDraw.Draw(img)
         cor1 = (190, 190, 190, 255)
         cor2 = (255, 255, 255, 255)
-
         for y in range(0, tamanho[1], celula):
             for x in range(0, tamanho[0], celula):
                 cor = cor1 if (x // celula + y // celula) % 2 == 0 else cor2
@@ -276,37 +304,37 @@ class AppRemoverBG(ctk.CTk):
         return img
 
     def redimensionar_para_preview(self, imagem, tamanho_max=380):
-        """Redimensiona mantendo proporção."""
         largura, altura = imagem.size
         if largura == 0 or altura == 0:
             return imagem
         proporcao = min(tamanho_max / largura, tamanho_max / altura)
-        nova_largura = max(1, int(largura * proporcao))
-        nova_altura = max(1, int(altura * proporcao))
-        return imagem.resize((nova_largura, nova_altura), Image.LANCZOS)
+        return imagem.resize(
+            (max(1, int(largura * proporcao)), max(1, int(altura * proporcao))),
+            Image.LANCZOS
+        )
 
     def carregar_imagem(self, caminho):
-        """Carrega a imagem a partir de um caminho (usado tanto pelo botão quanto pelo drop)."""
         try:
             self.caminho_entrada = caminho
-            nome_arquivo = os.path.basename(caminho)
+            self.fila_batch = []  # limpa modo lote
+            nome = os.path.basename(caminho)
 
             self.imagem_original = Image.open(caminho).convert("RGBA")
-            imagem_preview = self.redimensionar_para_preview(self.imagem_original.copy())
-            self.photo_original = ImageTk.PhotoImage(imagem_preview)
+            preview = self.redimensionar_para_preview(self.imagem_original.copy())
+            self.photo_original = ImageTk.PhotoImage(preview)
             self.label_preview_original.configure(image=self.photo_original, text="")
 
-            # Limpa resultado anterior
             self.imagem_sem_fundo = None
             self.photo_resultado = None
             self.label_preview_resultado.configure(image=None, text="Resultado aparecerá aqui")
 
             self.label_status.configure(
-                text=f"Selecionado: {nome_arquivo}",
+                text=f"Selecionado: {nome}",
                 text_color=("green", "#2ecc71")
             )
             self.btn_processar.configure(state="normal")
             self.btn_salvar.configure(state="disabled")
+            self.btn_copiar.configure(state="disabled")
 
         except Exception as e:
             self.label_status.configure(
@@ -317,7 +345,6 @@ class AppRemoverBG(ctk.CTk):
     def selecionar_imagem(self):
         if self.processando:
             return
-
         caminho = filedialog.askopenfilename(
             title="Selecione uma imagem",
             filetypes=[
@@ -328,18 +355,141 @@ class AppRemoverBG(ctk.CTk):
         if caminho:
             self.carregar_imagem(caminho)
 
+    # ------------------------------------------------------------------
+    # Processamento em LOTE
+    # ------------------------------------------------------------------
+    def selecionar_lote(self):
+        if self.processando:
+            return
+
+        caminhos = filedialog.askopenfilenames(
+            title="Selecione várias imagens para processar em lote",
+            filetypes=[
+                ("Imagens", "*.png *.jpg *.jpeg *.webp *.bmp *.gif"),
+                ("Todos os arquivos", "*.*")
+            ]
+        )
+        if not caminhos:
+            return
+
+        self.iniciar_lote_com_lista(list(caminhos))
+
+    def iniciar_lote_com_lista(self, lista):
+        """Inicia o processamento em lote a partir de uma lista de caminhos."""
+        self.fila_batch = [c for c in lista if Path(c).suffix.lower() in EXTENSOES]
+        if not self.fila_batch:
+            self.label_status.configure(
+                text="Nenhuma imagem válida selecionada.",
+                text_color=("red", "#e74c3c")
+            )
+            return
+
+        # Pergunta a pasta de saída
+        pasta = filedialog.askdirectory(title="Escolha a pasta onde salvar os resultados")
+        if not pasta:
+            self.fila_batch = []
+            return
+
+        self.pasta_saida_batch = pasta
+        self.indice_batch = 0
+        self.processando = True
+        self._desabilitar_controles()
+
+        self.label_status.configure(
+            text=f"Lote: 0/{len(self.fila_batch)} — preparando...",
+            text_color=("orange", "#f39c12")
+        )
+        self.update_idletasks()
+
+        # Começa pelo primeiro
+        thread = threading.Thread(target=self._processar_lote, daemon=True)
+        thread.start()
+
+    def _processar_lote(self):
+        total = len(self.fila_batch)
+        sucesso = 0
+        erros = 0
+
+        try:
+            if self.session is None:
+                self.session = new_session(self.modelo_atual)
+
+            for i, caminho in enumerate(self.fila_batch):
+                self.indice_batch = i + 1
+                nome = os.path.basename(caminho)
+                self.after(0, lambda n=nome, i=i, t=total: self.label_status.configure(
+                    text=f"Lote: {i+1}/{t} — processando {n}",
+                    text_color=("orange", "#f39c12")
+                ))
+
+                try:
+                    img = Image.open(caminho).convert("RGBA")
+                    resultado = remove(img, session=self.session)
+
+                    # Nome de saída
+                    stem = Path(caminho).stem
+                    saida = os.path.join(self.pasta_saida_batch, f"{stem}_sem_fundo.png")
+                    resultado.save(saida, "PNG")
+                    sucesso += 1
+
+                    # Atualiza preview com a última processada
+                    self.imagem_original = img
+                    self.imagem_sem_fundo = resultado
+                    preview_orig = self.redimensionar_para_preview(img.copy())
+                    preview_res = self.redimensionar_para_preview(resultado.copy())
+                    fundo = self.criar_fundo_xadrez(preview_res.size)
+                    composto = Image.alpha_composite(fundo, preview_res.convert("RGBA"))
+
+                    self.photo_original = ImageTk.PhotoImage(preview_orig)
+                    self.photo_resultado = ImageTk.PhotoImage(composto)
+
+                    self.after(0, self._atualizar_preview_lote)
+
+                except Exception as e:
+                    erros += 1
+                    print(f"Erro em {caminho}: {e}")
+
+            msg = f"Lote finalizado: {sucesso} ok"
+            if erros:
+                msg += f", {erros} com erro"
+            msg += f" — salvos em: {os.path.basename(self.pasta_saida_batch)}"
+
+            self.after(0, lambda: self._finalizar_lote(msg, sucesso > 0))
+
+        except Exception as e:
+            self.after(0, lambda: self._finalizar_lote(f"Erro no lote: {e}", False))
+
+    def _atualizar_preview_lote(self):
+        self.label_preview_original.configure(image=self.photo_original, text="")
+        self.label_preview_resultado.configure(image=self.photo_resultado, text="")
+
+    def _finalizar_lote(self, mensagem, sucesso):
+        self.label_status.configure(
+            text=mensagem,
+            text_color=("green", "#2ecc71") if sucesso else ("red", "#e74c3c")
+        )
+        self._habilitar_controles()
+        self.processando = False
+        if sucesso:
+            self.btn_salvar.configure(state="normal")
+            self.btn_copiar.configure(state="normal")
+
+    # ------------------------------------------------------------------
+    # Processamento único
+    # ------------------------------------------------------------------
     def iniciar_remocao(self):
         if self.processando or not self.caminho_entrada or self.imagem_original is None:
             return
 
+        # Se houver fila de lote, não mistura
+        if self.fila_batch:
+            return
+
         self.processando = True
-        self.btn_selecionar.configure(state="disabled")
-        self.btn_processar.configure(state="disabled")
-        self.btn_salvar.configure(state="disabled")
-        self.combo_modelo.configure(state="disabled")
+        self._desabilitar_controles()
 
         self.label_status.configure(
-            text=f"Processando com modelo '{self.modelo_atual}'... Aguarde (pode demorar na 1ª vez)",
+            text=f"Processando com modelo '{self.modelo_atual}'... Aguarde",
             text_color=("orange", "#f39c12")
         )
         self.update_idletasks()
@@ -349,19 +499,17 @@ class AppRemoverBG(ctk.CTk):
 
     def remover_fundo(self):
         try:
-            # Cria ou reutiliza a sessão do modelo
             if self.session is None:
                 self.session = new_session(self.modelo_atual)
 
             resultado = remove(self.imagem_original, session=self.session)
             self.imagem_sem_fundo = resultado
 
-            # Preview com fundo xadrez
             preview = self.redimensionar_para_preview(resultado.copy())
             fundo = self.criar_fundo_xadrez(preview.size)
             composto = Image.alpha_composite(fundo, preview.convert("RGBA"))
-
             self.photo_resultado = ImageTk.PhotoImage(composto)
+
             self.after(0, self.atualizar_resultado_ok)
 
         except Exception as e:
@@ -374,9 +522,8 @@ class AppRemoverBG(ctk.CTk):
             text_color=("green", "#2ecc71")
         )
         self.btn_salvar.configure(state="normal")
-        self.btn_selecionar.configure(state="normal")
-        self.btn_processar.configure(state="normal")
-        self.combo_modelo.configure(state="normal")
+        self.btn_copiar.configure(state="normal")
+        self._habilitar_controles()
         self.processando = False
 
     def atualizar_resultado_erro(self, mensagem):
@@ -384,34 +531,121 @@ class AppRemoverBG(ctk.CTk):
             text=f"Erro ao processar: {mensagem}",
             text_color=("red", "#e74c3c")
         )
-        self.btn_selecionar.configure(state="normal")
-        self.btn_processar.configure(state="normal")
-        self.combo_modelo.configure(state="normal")
+        self._habilitar_controles()
         self.processando = False
 
+    # ------------------------------------------------------------------
+    # Controles
+    # ------------------------------------------------------------------
+    def _desabilitar_controles(self):
+        self.btn_selecionar.configure(state="disabled")
+        self.btn_batch.configure(state="disabled")
+        self.btn_processar.configure(state="disabled")
+        self.btn_salvar.configure(state="disabled")
+        self.btn_copiar.configure(state="disabled")
+        self.combo_modelo.configure(state="disabled")
+
+    def _habilitar_controles(self):
+        self.btn_selecionar.configure(state="normal")
+        self.btn_batch.configure(state="normal")
+        self.btn_processar.configure(state="normal")
+        self.combo_modelo.configure(state="normal")
+
+    # ------------------------------------------------------------------
+    # Salvar e Copiar
+    # ------------------------------------------------------------------
     def salvar_imagem(self):
         if self.imagem_sem_fundo is None or self.processando:
             return
 
-        caminho_saida = filedialog.asksaveasfilename(
+        caminho = filedialog.asksaveasfilename(
             defaultextension=".png",
             filetypes=[("Imagem PNG", "*.png")],
             title="Salvar imagem sem fundo",
             initialfile="sem_fundo.png"
         )
-
-        if not caminho_saida:
+        if not caminho:
             return
 
         try:
-            self.imagem_sem_fundo.save(caminho_saida, "PNG")
+            self.imagem_sem_fundo.save(caminho, "PNG")
             self.label_status.configure(
-                text=f"Salvo em: {os.path.basename(caminho_saida)}",
+                text=f"Salvo em: {os.path.basename(caminho)}",
                 text_color=("green", "#2ecc71")
             )
         except Exception as e:
             self.label_status.configure(
                 text=f"Erro ao salvar: {e}",
+                text_color=("red", "#e74c3c")
+            )
+
+    def copiar_para_clipboard(self):
+        """Copia a imagem sem fundo para a área de transferência."""
+        if self.imagem_sem_fundo is None or self.processando:
+            return
+
+        try:
+            # Converte para RGB com fundo branco (a maioria dos programas
+            # de área de transferência não lida bem com RGBA puro)
+            img = self.imagem_sem_fundo.convert("RGBA")
+            fundo = Image.new("RGBA", img.size, (255, 255, 255, 255))
+            composto = Image.alpha_composite(fundo, img).convert("RGB")
+
+            # Método cross-platform usando Pillow + io
+            output = io.BytesIO()
+            composto.save(output, "BMP")
+            data = output.getvalue()[14:]  # remove header BMP
+            output.close()
+
+            # Windows
+            try:
+                import win32clipboard
+                win32clipboard.OpenClipboard()
+                win32clipboard.EmptyClipboard()
+                win32clipboard.SetClipboardData(win32clipboard.CF_DIB, data)
+                win32clipboard.CloseClipboard()
+                self.label_status.configure(
+                    text="Imagem copiada para a área de transferência!",
+                    text_color=("green", "#2ecc71")
+                )
+                return
+            except ImportError:
+                pass
+
+            # Fallback: salva temporário e tenta com xclip / pbcopy (Linux/macOS)
+            # ou usa pyperclip se disponível (só texto, não imagem)
+            temp = Path.home() / ".bg_remover_temp.png"
+            self.imagem_sem_fundo.save(temp, "PNG")
+
+            import platform
+            sistema = platform.system()
+
+            if sistema == "Linux":
+                # tenta xclip
+                os.system(f'xclip -selection clipboard -t image/png -i "{temp}" 2>/dev/null')
+                self.label_status.configure(
+                    text="Imagem enviada para a área de transferência (xclip).",
+                    text_color=("green", "#2ecc71")
+                )
+            elif sistema == "Darwin":  # macOS
+                os.system(f'osascript -e \'set the clipboard to (read (POSIX file "{temp}") as «class PNGf»)\'')
+                self.label_status.configure(
+                    text="Imagem enviada para a área de transferência.",
+                    text_color=("green", "#2ecc71")
+                )
+            else:
+                # Windows sem win32clipboard: avisa o usuário
+                self.label_status.configure(
+                    text="Para copiar no Windows, instale: pip install pywin32",
+                    text_color=("orange", "#f39c12")
+                )
+
+            # limpa o temporário depois de um tempo
+            self.after(3000, lambda: temp.unlink(missing_ok=True))
+
+        except Exception as e:
+            self.label_status.configure(
+                text=f"Erro ao copiar: {e}",
                 text_color=("red", "#e74c3c")
             )
 
