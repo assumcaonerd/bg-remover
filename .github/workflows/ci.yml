@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          # optional tools used only in CI
+          pip install ruff
+
+      - name: Lint with ruff
+        run: |
+          ruff check app.py --select E,F,W --ignore E501
+
+      - name: Syntax and import check
+        run: |
+          python -m py_compile app.py
+          python -c "
+          import ast
+          with open('app.py', encoding='utf-8') as f:
+              ast.parse(f.read())
+          print('Syntax OK')
+          "
+
+      - name: Basic module smoke test
+        run: |
+          python -c "
+          # Testa imports principais sem abrir a janela gráfica
+          from pathlib import Path
+          import importlib.util
+
+          # Verifica se o arquivo existe e é legível
+          assert Path('app.py').exists()
+          print('app.py found')
+
+          # Importa só o necessário para validar a estrutura
+          import customtkinter
+          from PIL import Image, ImageTk, ImageDraw
+          print('customtkinter + Pillow OK')
+
+          # rembg pode ser pesado; só confirma que o pacote está instalado
+          import rembg
+          print('rembg package available')
+
+          print('Smoke test passed')
+          "
