@@ -8,6 +8,7 @@ Built with Python, [rembg](https://github.com/danielgatis/rembg), Pillow, Custom
 
 - **Drag & Drop** – drop one or more images on the left panel
 - **Batch processing** – select multiple images and process them all at once
+- **Visual progress bar** – shows percentage and current file during batch
 - **Copy to clipboard** – one click to copy the result
 - **Multiple AI models** (u2net, isnet, birefnet, anime, portrait, etc.)
 - Side-by-side preview with checkerboard transparency
@@ -46,7 +47,8 @@ python app.py
 ### Batch (multiple images)
 1. Click **Lote (várias)** or drop several files at once
 2. Choose the output folder
-3. The app processes everything automatically and saves `_sem_fundo.png` files
+3. A progress bar appears showing current file and percentage
+4. The app processes everything automatically and saves `_sem_fundo.png` files
 
 ### First run note
 The first time you use a new model it may take 1–2 minutes to download. After that it is much faster.
@@ -63,8 +65,9 @@ The first time you use a new model it may take 1–2 minutes to download. After 
 
 ## Interface
 
-- Window ≈ 980×760
+- Window ≈ 980×800
 - Model selector + 5 action buttons
+- Progress bar (visible only during batch)
 - Two preview panels
 - Status bar
 - Drag images onto the left panel
