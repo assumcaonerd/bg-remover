@@ -6,18 +6,24 @@ Built with Python, [rembg](https://github.com/danielgatis/rembg), Pillow, Custom
 
 ## Features
 
-- **Drag & Drop** support – drop an image directly on the preview panel
-- **Multiple AI models** to choose from (u2net, isnet, birefnet, anime, portrait, etc.)
-- Side-by-side preview (Before / After)
-- Transparent background preview with checkerboard pattern
-- Export result as real PNG with transparency
-- Non-blocking UI (processing runs in a background thread)
+- **Drag & Drop** – drop one or more images on the left panel
+- **Batch processing** – select multiple images and process them all at once
+- **Copy to clipboard** – one click to copy the result
+- **Multiple AI models** (u2net, isnet, birefnet, anime, portrait, etc.)
+- Side-by-side preview with checkerboard transparency
+- Real PNG export with transparency
+- Non-blocking UI (background thread)
 - Custom application icon
 
 ## Requirements
 
 - Python 3.9+
-- Dependencies listed in `requirements.txt`
+- Dependencies in `requirements.txt`
+
+Optional (better Windows clipboard support):
+```bash
+pip install pywin32
+```
 
 ## Installation
 
@@ -31,27 +37,34 @@ pip install -r requirements.txt
 python app.py
 ```
 
-### First run note
+### Single image
+1. Drag an image or click **Selecionar**
+2. Choose a model (optional)
+3. Click **Remover Fundo**
+4. Save or **Copiar** to clipboard
 
-The first time you process an image with a new model, the app may take 1–2 minutes.  
-`rembg` automatically downloads the selected AI model. Subsequent runs with the same model are much faster.
+### Batch (multiple images)
+1. Click **Lote (várias)** or drop several files at once
+2. Choose the output folder
+3. The app processes everything automatically and saves `_sem_fundo.png` files
+
+### First run note
+The first time you use a new model it may take 1–2 minutes to download. After that it is much faster.
 
 ### Recommended models
 
-| Use case              | Model                    |
-|-----------------------|--------------------------|
-| General purpose       | u2net / isnet-general-use |
-| Fast / lightweight    | u2netp / silueta         |
+| Use case              | Model                         |
+|-----------------------|-------------------------------|
+| General purpose       | u2net / isnet-general-use     |
+| Fast / lightweight    | u2netp / silueta              |
 | People / portraits    | u2net_human_seg / birefnet-portrait |
-| Anime / illustrations | isnet-anime              |
-| High quality          | birefnet-general         |
+| Anime / illustrations | isnet-anime                   |
+| High quality          | birefnet-general              |
 
 ## Interface
 
-- Window size: ~960×720
-- Model selector + three action buttons
+- Window ≈ 980×760
+- Model selector + 5 action buttons
 - Two preview panels
-- Status bar at the bottom
-- Drag any image onto the left panel
-
-Images are automatically resized to fit the preview panels while keeping aspect ratio.
+- Status bar
+- Drag images onto the left panel
