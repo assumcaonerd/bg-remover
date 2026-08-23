@@ -93,19 +93,26 @@ Files used for packaging:
 
 Workflow: `.github/workflows/build.yml`
 
-**How to trigger:**
-1. Go to the **Actions** tab → **Build Executables** → **Run workflow**
-2. Or create a version tag:
-   ```bash
-   git tag v1.0.0
-   git push origin v1.0.0
-   ```
+**Build only (without release):**
+1. Go to **Actions** → **Build Executables** → **Run workflow**
+2. Download the artifacts from the finished run (available for 14 days)
 
-The workflow builds for:
-- **Windows** (`BG-Remover-Windows`)
-- **Linux** (`BG-Remover-Linux`)
+**Create a public GitHub Release:**
 
-Artifacts stay available for 14 days. When you push a `v*` tag, a GitHub Release is created automatically with the zipped builds.
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+What happens automatically:
+1. Builds Windows and Linux executables
+2. Creates a GitHub Release named `BG Remover v1.0.0`
+3. Attaches versioned zip files:
+   - `BG-Remover-Windows-v1.0.0.zip`
+   - `BG-Remover-Linux-v1.0.0.zip`
+4. Generates release notes from commits
+
+Users can then download the zips from the **Releases** page of the repository.
 
 > Note: AI models are **not** bundled. They download automatically on first use (to the user cache), which keeps the executable smaller.
 
