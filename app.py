@@ -1,6 +1,6 @@
 import customtkinter as ctk
 from tkinter import filedialog
-from PIL import Image, ImageTk, ImageDraw, ImageGrab
+from PIL import Image, ImageTk, ImageDraw
 from rembg import remove, new_session
 import os
 import threading
@@ -13,13 +13,6 @@ try:
     HAS_DND = True
 except ImportError:
     HAS_DND = False
-
-# Clipboard (Windows / Linux / macOS)
-try:
-    import pyperclip
-    HAS_PYPERCLIP = True
-except ImportError:
-    HAS_PYPERCLIP = False
 
 # Configuração visual
 ctk.set_appearance_mode("System")
@@ -68,9 +61,9 @@ class AppRemoverBG(ctk.CTk):
             pass
 
         self.title("BG Remover - Removedor de Fundo com IA")
-        self.geometry("980x760")
+        self.geometry("980x800")
         self.resizable(False, False)
-        self.minsize(940, 720)
+        self.minsize(940, 760)
 
         # Estado
         self.caminho_entrada = ""
@@ -81,7 +74,7 @@ class AppRemoverBG(ctk.CTk):
         self.processando = False
         self.session = None
         self.modelo_atual = "u2net"
-        self.fila_batch = []          # lista de caminhos para processar em lote
+        self.fila_batch = []
         self.indice_batch = 0
         self.pasta_saida_batch = ""
 
@@ -91,7 +84,7 @@ class AppRemoverBG(ctk.CTk):
             text="🖼️ Removedor de Fundo com IA",
             font=ctk.CTkFont(size=24, weight="bold")
         )
-        self.label_titulo.pack(pady=(14, 4))
+        self.label_titulo.pack(pady=(12, 4))
 
         # === CONTROLES (modelo) ===
         self.frame_controles = ctk.CTkFrame(self, fg_color="transparent")
@@ -172,9 +165,31 @@ class AppRemoverBG(ctk.CTk):
         )
         self.btn_copiar.pack(side="left", padx=6)
 
+        # === BARRA DE PROGRESSO (visível só no lote) ===
+        self.frame_progresso = ctk.CTkFrame(self, fg_color="transparent")
+        self.frame_progresso.pack(pady=(6, 2), fill="x", padx=30)
+
+        self.label_progresso = ctk.CTkLabel(
+            self.frame_progresso,
+            text="",
+            font=ctk.CTkFont(size=12)
+        )
+        self.label_progresso.pack(pady=(0, 2))
+
+        self.barra_progresso = ctk.CTkProgressBar(
+            self.frame_progresso,
+            width=700,
+            height=16,
+            corner_radius=8
+        )
+        self.barra_progresso.set(0)
+        self.barra_progresso.pack()
+        # Esconde no início
+        self.frame_progresso.pack_forget()
+
         # === PRÉ-VISUALIZAÇÃO ===
         self.frame_preview = ctk.CTkFrame(self)
-        self.frame_preview.pack(pady=8, padx=18, fill="both", expand=True)
+        self.frame_preview.pack(pady=6, padx=18, fill="both", expand=True)
 
         # Original
         self.frame_original = ctk.CTkFrame(self.frame_preview)
@@ -192,7 +207,7 @@ class AppRemoverBG(ctk.CTk):
             text="Nenhuma imagem\n\nArraste e solte aqui\nou use os botões acima",
             font=ctk.CTkFont(size=13),
             width=400,
-            height=390,
+            height=380,
             justify="center"
         )
         self.label_preview_original.pack(pady=4, padx=8)
@@ -213,7 +228,7 @@ class AppRemoverBG(ctk.CTk):
             text="Resultado aparecerá aqui",
             font=ctk.CTkFont(size=13),
             width=400,
-            height=390
+            height=380
         )
         self.label_preview_resultado.pack(pady=4, padx=8)
 
@@ -269,7 +284,6 @@ class AppRemoverBG(ctk.CTk):
             if len(arquivos_validos) == 1:
                 self.carregar_imagem(arquivos_validos[0])
             else:
-                # Vários arquivos soltos → trata como lote
                 self.iniciar_lote_com_lista(arquivos_validos)
 
         except Exception as e:
@@ -303,7 +317,7 @@ class AppRemoverBG(ctk.CTk):
                 draw.rectangle([x, y, x + celula, y + celula], fill=cor)
         return img
 
-    def redimensionar_para_preview(self, imagem, tamanho_max=380):
+    def redimensionar_para_preview(self, imagem, tamanho_max=370):
         largura, altura = imagem.size
         if largura == 0 or altura == 0:
             return imagem
@@ -316,7 +330,7 @@ class AppRemoverBG(ctk.CTk):
     def carregar_imagem(self, caminho):
         try:
             self.caminho_entrada = caminho
-            self.fila_batch = []  # limpa modo lote
+            self.fila_batch = []
             nome = os.path.basename(caminho)
 
             self.imagem_original = Image.open(caminho).convert("RGBA")
@@ -327,6 +341,8 @@ class AppRemoverBG(ctk.CTk):
             self.imagem_sem_fundo = None
             self.photo_resultado = None
             self.label_preview_resultado.configure(image=None, text="Resultado aparecerá aqui")
+
+            self._esconder_progresso()
 
             self.label_status.configure(
                 text=f"Selecionado: {nome}",
@@ -356,6 +372,30 @@ class AppRemoverBG(ctk.CTk):
             self.carregar_imagem(caminho)
 
     # ------------------------------------------------------------------
+    # Progresso
+    # ------------------------------------------------------------------
+    def _mostrar_progresso(self):
+        self.frame_progresso.pack(pady=(6, 2), fill="x", padx=30, before=self.frame_preview)
+        self.barra_progresso.set(0)
+        self.label_progresso.configure(text="Preparando...")
+
+    def _esconder_progresso(self):
+        self.frame_progresso.pack_forget()
+        self.barra_progresso.set(0)
+        self.label_progresso.configure(text="")
+
+    def _atualizar_progresso(self, atual, total, nome=""):
+        if total <= 0:
+            return
+        valor = atual / total
+        self.barra_progresso.set(valor)
+        pct = int(valor * 100)
+        texto = f"{atual}/{total}  ({pct}%)"
+        if nome:
+            texto += f"  —  {nome}"
+        self.label_progresso.configure(text=texto)
+
+    # ------------------------------------------------------------------
     # Processamento em LOTE
     # ------------------------------------------------------------------
     def selecionar_lote(self):
@@ -375,7 +415,6 @@ class AppRemoverBG(ctk.CTk):
         self.iniciar_lote_com_lista(list(caminhos))
 
     def iniciar_lote_com_lista(self, lista):
-        """Inicia o processamento em lote a partir de uma lista de caminhos."""
         self.fila_batch = [c for c in lista if Path(c).suffix.lower() in EXTENSOES]
         if not self.fila_batch:
             self.label_status.configure(
@@ -384,7 +423,6 @@ class AppRemoverBG(ctk.CTk):
             )
             return
 
-        # Pergunta a pasta de saída
         pasta = filedialog.askdirectory(title="Escolha a pasta onde salvar os resultados")
         if not pasta:
             self.fila_batch = []
@@ -394,14 +432,14 @@ class AppRemoverBG(ctk.CTk):
         self.indice_batch = 0
         self.processando = True
         self._desabilitar_controles()
+        self._mostrar_progresso()
 
         self.label_status.configure(
-            text=f"Lote: 0/{len(self.fila_batch)} — preparando...",
+            text=f"Iniciando lote com {len(self.fila_batch)} imagens...",
             text_color=("orange", "#f39c12")
         )
         self.update_idletasks()
 
-        # Começa pelo primeiro
         thread = threading.Thread(target=self._processar_lote, daemon=True)
         thread.start()
 
@@ -417,8 +455,11 @@ class AppRemoverBG(ctk.CTk):
             for i, caminho in enumerate(self.fila_batch):
                 self.indice_batch = i + 1
                 nome = os.path.basename(caminho)
+
+                # Atualiza barra + status na thread principal
+                self.after(0, lambda a=i+1, t=total, n=nome: self._atualizar_progresso(a, t, n))
                 self.after(0, lambda n=nome, i=i, t=total: self.label_status.configure(
-                    text=f"Lote: {i+1}/{t} — processando {n}",
+                    text=f"Lote: processando {n} ({i+1}/{t})",
                     text_color=("orange", "#f39c12")
                 ))
 
@@ -426,7 +467,6 @@ class AppRemoverBG(ctk.CTk):
                     img = Image.open(caminho).convert("RGBA")
                     resultado = remove(img, session=self.session)
 
-                    # Nome de saída
                     stem = Path(caminho).stem
                     saida = os.path.join(self.pasta_saida_batch, f"{stem}_sem_fundo.png")
                     resultado.save(saida, "PNG")
@@ -454,16 +494,20 @@ class AppRemoverBG(ctk.CTk):
                 msg += f", {erros} com erro"
             msg += f" — salvos em: {os.path.basename(self.pasta_saida_batch)}"
 
-            self.after(0, lambda: self._finalizar_lote(msg, sucesso > 0))
+            self.after(0, lambda: self._finalizar_lote(msg, sucesso > 0, total))
 
         except Exception as e:
-            self.after(0, lambda: self._finalizar_lote(f"Erro no lote: {e}", False))
+            self.after(0, lambda: self._finalizar_lote(f"Erro no lote: {e}", False, total))
 
     def _atualizar_preview_lote(self):
         self.label_preview_original.configure(image=self.photo_original, text="")
         self.label_preview_resultado.configure(image=self.photo_resultado, text="")
 
-    def _finalizar_lote(self, mensagem, sucesso):
+    def _finalizar_lote(self, mensagem, sucesso, total):
+        # Completa a barra
+        self.barra_progresso.set(1.0)
+        self.label_progresso.configure(text=f"{total}/{total}  (100%) — Concluído")
+
         self.label_status.configure(
             text=mensagem,
             text_color=("green", "#2ecc71") if sucesso else ("red", "#e74c3c")
@@ -474,19 +518,21 @@ class AppRemoverBG(ctk.CTk):
             self.btn_salvar.configure(state="normal")
             self.btn_copiar.configure(state="normal")
 
+        # Esconde a barra depois de alguns segundos
+        self.after(4000, self._esconder_progresso)
+
     # ------------------------------------------------------------------
     # Processamento único
     # ------------------------------------------------------------------
     def iniciar_remocao(self):
         if self.processando or not self.caminho_entrada or self.imagem_original is None:
             return
-
-        # Se houver fila de lote, não mistura
         if self.fila_batch:
             return
 
         self.processando = True
         self._desabilitar_controles()
+        self._esconder_progresso()
 
         self.label_status.configure(
             text=f"Processando com modelo '{self.modelo_atual}'... Aguarde",
@@ -580,24 +626,19 @@ class AppRemoverBG(ctk.CTk):
             )
 
     def copiar_para_clipboard(self):
-        """Copia a imagem sem fundo para a área de transferência."""
         if self.imagem_sem_fundo is None or self.processando:
             return
 
         try:
-            # Converte para RGB com fundo branco (a maioria dos programas
-            # de área de transferência não lida bem com RGBA puro)
             img = self.imagem_sem_fundo.convert("RGBA")
             fundo = Image.new("RGBA", img.size, (255, 255, 255, 255))
             composto = Image.alpha_composite(fundo, img).convert("RGB")
 
-            # Método cross-platform usando Pillow + io
             output = io.BytesIO()
             composto.save(output, "BMP")
-            data = output.getvalue()[14:]  # remove header BMP
+            data = output.getvalue()[14:]
             output.close()
 
-            # Windows
             try:
                 import win32clipboard
                 win32clipboard.OpenClipboard()
@@ -612,8 +653,6 @@ class AppRemoverBG(ctk.CTk):
             except ImportError:
                 pass
 
-            # Fallback: salva temporário e tenta com xclip / pbcopy (Linux/macOS)
-            # ou usa pyperclip se disponível (só texto, não imagem)
             temp = Path.home() / ".bg_remover_temp.png"
             self.imagem_sem_fundo.save(temp, "PNG")
 
@@ -621,26 +660,23 @@ class AppRemoverBG(ctk.CTk):
             sistema = platform.system()
 
             if sistema == "Linux":
-                # tenta xclip
                 os.system(f'xclip -selection clipboard -t image/png -i "{temp}" 2>/dev/null')
                 self.label_status.configure(
                     text="Imagem enviada para a área de transferência (xclip).",
                     text_color=("green", "#2ecc71")
                 )
-            elif sistema == "Darwin":  # macOS
+            elif sistema == "Darwin":
                 os.system(f'osascript -e \'set the clipboard to (read (POSIX file "{temp}") as «class PNGf»)\'')
                 self.label_status.configure(
                     text="Imagem enviada para a área de transferência.",
                     text_color=("green", "#2ecc71")
                 )
             else:
-                # Windows sem win32clipboard: avisa o usuário
                 self.label_status.configure(
                     text="Para copiar no Windows, instale: pip install pywin32",
                     text_color=("orange", "#f39c12")
                 )
 
-            # limpa o temporário depois de um tempo
             self.after(3000, lambda: temp.unlink(missing_ok=True))
 
         except Exception as e:
